@@ -117,10 +117,10 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
 #' @export
 processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writeOut = TRUE, outputName = "Output_Processed") {
 
-  IDs_All <- unique(rawOutput$personID)
+  IDs_All <- select(rawOutput, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
 
-  processedAll <- matrix(ncol = 6)
-  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID")
+  processedAll <- matrix(ncol = 10)
+  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Performing post-processing of ",
                         length(IDs_All), " patients.\n Total alignments: ",
@@ -128,22 +128,23 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
                   bullet_col = "yellow", bullet = "info")
 
   #Collect all tests here
-  for(i in c(1:length(IDs_All))){
-
-    newOutput <- rawOutput[rawOutput$personID == IDs_All[i],]
-
+   #Collect all tests here
+  for(i in c(1:nrow(IDs_All))){
+    
+    newOutput <- dplyr::slice(IDs_All, i) %>%
+      inner_join(rawOutput) 
+    
     processed <- plotOutput(newOutput, returnDat = T, returnDrugs = FALSE)
-
+    
     progress(x = i, max = length(IDs_All))
-
-    processed$personID <- as.character(processed$personID)
-
-    processedAll <- rbind(processedAll,processed)
-
+    
+    processed <- left_join(processed, dplyr::slice(IDs_All, i))
+    
+    if(i == 1) processedAll <- processed
+    if(i > 1) processedAll <- rbind(processedAll,processed)
+    
   }
-
-  processedAll <- processedAll[-1,]
-
+  
   if(writeOut == TRUE){
     outputFile <- here::here()
     suppressWarnings(
@@ -154,10 +155,18 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
   processedAll$timeToNextRegimen <- 0
   processedAll$timeToEOD <- 0
 
-  for(ID in unique(processedAll$personID)){
-    output_temp <- rawOutput[rawOutput$personID==ID,]
+  IDs_All <- select(processedAll, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
+
+  processedAllF <- slice(processedAll,0)
+
+  for(ID in 1:nrow(IDs_All)){
+    output_temp <- dplyr::slice(IDs_All, i) %>%
+      inner_join(rawOutput) 
+
     drugDF_temp <- createDrugDF(encode(output_temp[is.na(output_temp$Score)|output_temp$Score=="",][1,]$DrugRecord))
-    processed_temp <- processedAll[processedAll$personID == ID,]
+
+    processed_temp <- dplyr::slice(IDs_All, i) %>%
+      inner_join(processedAll)
 
     endOfData <- max(drugDF_temp$t_start)
 
@@ -168,7 +177,7 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
 
     processed_temp[nrow(processed_temp),]$timeToEOD <- endOfData - processed_temp[nrow(processed_temp),]$t_end
 
-    processedAll[processedAll$personID == ID,] <- processed_temp
+    processedAllF <- bind_rows(processedAllF, processed_temp)
   }
 
   if(dim(processedAll[which(processedAll$timeToNextRegimen < 0),])[1]){
