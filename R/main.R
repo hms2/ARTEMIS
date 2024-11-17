@@ -29,9 +29,10 @@
 #' @export
 generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, mem = -1, removeOverlap = -1, method, writeOut = TRUE, outputName = "Output") {
 
-  output_all <- as.data.frame(matrix(nrow = 0,ncol=12))
+  output_all <- as.data.frame(matrix(nrow = 0,ncol=16))
   colnames(output_all) <- c("regName","Regimen","DrugRecord","Score","regimen_Start","regimen_End",
-                            "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS","personID")
+                            "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS",
+                            "personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Processing ",dim(stringDF)[1]," patients and ",dim(regimens)[1]," regimens...",sep=""),
              bullet_col = "yellow", bullet = "info")
@@ -40,9 +41,10 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
 
     drugRecord <- encode(stringDF[j,]$seq)
 
-    output <- as.data.frame(matrix(nrow = 0,ncol=12))
+    output <- as.data.frame(matrix(nrow = 0,ncol=16))
     colnames(output) <- c("regName","Regimen","DrugRecord","Score","regimen_Start","regimen_End",
-                          "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS","personID")
+                          "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS",
+                          "personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
     for(i in c(1:dim(regimens)[1])) {
 
@@ -67,6 +69,11 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
       if(dim(output_temp)[1] > 1){
 
         output_temp$personID <- stringDF[j,]$person_id
+        output_temp$cohortDefinitionId <- stringDF[j,]$cohort_definition_id
+        output_temp$cohortStartDate <- stringDF[j,]$cohort_start_date
+        output_temp$cohortEndDate <- stringDF[j,]$cohort_end_date
+        output_temp$referenceDate <- stringDF[j,]$reference_date
+
 
         output <- rbind(output,output_temp)
 
