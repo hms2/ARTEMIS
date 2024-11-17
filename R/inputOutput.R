@@ -88,9 +88,11 @@ stringDF_from_cdm <- function(con_df, writeOut=TRUE, outputName = "Output", vali
 
   #Correct lagtimes using dayTaken and start date for each subject ID
   con_df_out <- con_df %>%
-    dplyr::with_groups(person_id, dplyr::mutate, dayTaken = .data$dayTaken - min(.data$dayTaken)) %>%
-    dplyr::mutate_at(c("dayTaken"), as.numeric) %>%
-    dplyr::arrange(.data$person_id,.data$dayTaken,.data$concept_name) %>%
+    dplyr::mutate(
+      dayTakenReference = min(drug_exposure_start_date),
+      dayTaken = as.numeric(drug_exposure_start_date - min(drug_exposure_start_date), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, person_id))) %>%
+    dplyr::arrange(cohort_definition_id, cohort_start_date, cohort_end_date, person_id, dayTaken, concept_name) %>%
+    d
     dplyr::with_groups(person_id, dplyr::mutate,
                        dayTaken2 = .data$dayTaken -
                          dplyr::lag(.data$dayTaken, default = dplyr::first(.data$dayTaken))) %>%
