@@ -6,7 +6,7 @@
 #' @param writeSchema A schema where the user has write access
 #' @return A con_df dataframe
 #' @export
-getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema){
+getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema, exposureStart = 0, exposureEnd = NULL){
 
   connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
 
@@ -30,12 +30,13 @@ getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema){
                                                          cohortTableNames = cohortTableNames,
                                                          cohortDefinitionSet = cohortsToCreate)
 
-  subject_ids <- DatabaseConnector::dbGetQuery(conn = connection,
-                                               statement = paste("SELECT subject_id FROM ",writeSchema,".",name,sep=""))
-
   sql_template <- "
 WITH filtered_drug_exposure AS (
-  SELECT drug_exposure.person_id,
+  SELECT @name.cohort_definition_id,
+         @name.cohort_start_date,
+         @name.cohort_end_date,
+         drug_exposure.drug_exposure_id,
+         drug_exposure.person_id,
          drug_exposure.drug_exposure_start_date,
          drug_exposure.drug_concept_id,
          concept_ancestor.ancestor_concept_id,
@@ -43,13 +44,15 @@ WITH filtered_drug_exposure AS (
   FROM @cdmSchema.drug_exposure
   LEFT JOIN @cdmSchema.concept_ancestor ON drug_exposure.drug_concept_id = concept_ancestor.descendant_concept_id
   LEFT JOIN @cdmSchema.concept ON concept_ancestor.ancestor_concept_id = concept.concept_id
-  WHERE drug_exposure.person_id IN @subject_ids
-    AND LOWER(concept.concept_class_id) = 'ingredient'
+  INNER JOIN @writeSchema.@name ON drug_exposure.person_id = @name.subject_id
+    {@exposureStart != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureStart, @name.cohort_start_date)}
+    {@exposureEnd != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureEnd, @name.cohort_end_date)}
+  WHERE LOWER(concept.concept_class_id) = 'ingredient'
 )
 SELECT * FROM filtered_drug_exposure;
 "
 
-rendered_sql <- SqlRender::render(sql_template, subject_ids = gsub("c","",paste(subject_ids)), cdmSchema = cdmSchema)
+rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema, writeSchema = writeSchema, name = name, exposureStart = exposureStart, exposureEnd = exposureEnd)
 
 con_df <- DatabaseConnector::dbGetQuery(conn = connection,
                                         statement = rendered_sql)
