@@ -4,6 +4,8 @@
 #' @param name A cohort-specific name for written tables
 #' @param cdmSchema A schema containing a valid OMOP CDM
 #' @param writeSchema A schema where the user has write access
+#' @param exposureStart The start day after which to consider drug exposures, with respect to cohort start date, using NULL to take the full history)
+#' @param exposureStart The end day before which to consider drug exposures, with respect to cohort end date, using NULL to take the full history)
 #' @return A con_df dataframe
 #' @export
 getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema, exposureStart = 0, exposureEnd = NULL){
@@ -82,25 +84,19 @@ stringDF_from_cdm <- function(con_df, writeOut=TRUE, outputName = "Output", vali
   cli::cat_bullet("Generating lag times and constructing drug record strings...",
                   bullet_col = "yellow", bullet = "info")
 
-  #Use lubridate to generate lagtimes
-  con_df$dayTaken <- difftime(lubridate::ymd(con_df$drug_exposure_start_date),
-                              min(lubridate::ymd(con_df$drug_exposure_start_date)), units = "days")
-
   #Correct lagtimes using dayTaken and start date for each subject ID
   con_df_out <- con_df %>%
     dplyr::mutate(
-      dayTakenReference = min(drug_exposure_start_date),
-      dayTaken = as.numeric(drug_exposure_start_date - min(drug_exposure_start_date), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, person_id))) %>%
-    dplyr::arrange(cohort_definition_id, cohort_start_date, cohort_end_date, person_id, dayTaken, concept_name) %>%
-    d
-    dplyr::with_groups(person_id, dplyr::mutate,
-                       dayTaken2 = .data$dayTaken -
-                         dplyr::lag(.data$dayTaken, default = dplyr::first(.data$dayTaken))) %>%
-    dplyr::filter(!duplicated(paste(.data$person_id,.data$drug_exposure_start_date,.data$concept_name)))
+      reference_date = min(drug_exposure_start_date),
+      dayTaken = as.numeric(drug_exposure_start_date - min(drug_exposure_start_date)), 
+      .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, person_id)
+      ) %>%
+    dplyr::arrange(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id, dayTaken, concept_name) %>%
+    dplyr::mutate(dayTaken2 = dayTaken - dplyr::lag(dayTaken, default = dplyr::first(dayTaken)), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id)) %>%
+    dplyr::filter(!duplicated(paste(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id, drug_exposure_start_date, concept_name)))
 
   con_df_out2 <- con_df_out  %>%
-    dplyr::group_by(.data$person_id) %>%
-    dplyr::summarise(seq = paste(.data$dayTaken2, ".",.data$concept_name, ";", collapse = "", sep = ""))
+    dplyr::summarise(seq = paste(dayTaken2, ".", concept_name, ";", collapse = "", sep = ""), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id))
 
   con_df_out2$seq <- gsub(" ","",gsub(",","_",con_df_out2$seq))
 
