@@ -327,7 +327,7 @@ makeCdmEpisodes <- function(processed_eras, drug_exposures, validDrugs, connecti
     ) %>%
     select(episode_id:episode_source_concept_id)
   
-  episode_event <- select(episodes, episode_id, person_id, episode_start_date, episode_end_date, episode_source_value) %>%
+  episode_event <- select(episode, episode_id, person_id, episode_start_date, episode_end_date, episode_source_value) %>%
     left_join(filter(drug_exposures, ancestor_concept_id %in% validDrugs$valid_concept_id), relationship = "many-to-many") %>%
     filter(drug_exposure_start_date >= episode_start_date, drug_exposure_start_date <= episode_end_date) %>% 
     select(episode_id, event_id = drug_exposure_id) %>%
