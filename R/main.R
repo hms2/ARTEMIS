@@ -123,7 +123,7 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
   colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Performing post-processing of ",
-                        length(IDs_All), " patients.\n Total alignments: ",
+                        nrow(IDs_All), " patients.\n Total alignments: ",
                         dim(rawOutput)[1],sep = ""),
                   bullet_col = "yellow", bullet = "info")
 
@@ -136,7 +136,7 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
     
     processed <- plotOutput(newOutput, returnDat = T, returnDrugs = FALSE)
     
-    progress(x = i, max = length(IDs_All))
+    progress(x = i, max = nrow(IDs_All))
     
     processed <- left_join(processed, dplyr::slice(IDs_All, i))
     
