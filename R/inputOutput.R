@@ -61,7 +61,7 @@ WITH filtered_drug_exposure AS (
   LEFT JOIN @cdmSchema.concept ON concept_ancestor.ancestor_concept_id = concept.concept_id
   INNER JOIN @writeSchema.@name 
     ON drug_exposure.person_id = @name.subject_id
-    AND @name.cohort_definition_id = @cohortDefinitionId
+    {@cohortDefinitionId != ''} ? { AND @name.cohort_definition_id = @cohortDefinitionId }
     {@exposureStart != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureStart, @name.cohort_start_date)}
     {@exposureEnd != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureEnd, @name.cohort_end_date)}
   WHERE LOWER(concept.concept_class_id) = 'ingredient'
