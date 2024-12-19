@@ -41,7 +41,7 @@ generateCohorts <- function(connectionDetails, json, name, cdmSchema, writeSchem
 #' @param exposureEnd The end day before which to consider drug exposures, with respect to cohort end date, using NULL to take the full history)
 #' @return A con_df dataframe
 #' @export
-getConDF <- function(connectionDetails, cohortTable, cdmSchema, writeSchema, cohortDefinitionId, exposureStart = 0, exposureEnd = NULL){
+getConDF <- function(connectionDetails, cohortTable, cdmSchema, writeSchema, cohortDefinitionId = NULL, exposureStart = 0, exposureEnd = NULL){
 
   connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
 
