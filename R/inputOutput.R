@@ -1,14 +1,11 @@
-#' Generate a con_df dataframe without using CDMConnector
+#' Generate cohorts to run ARTEMIS
 #' @param connectionDetails A set of DatabaseConnector connectiondetails
 #' @param json A loaded cohort from loadJSON()
 #' @param name A cohort-specific name for written tables
 #' @param cdmSchema A schema containing a valid OMOP CDM
 #' @param writeSchema A schema where the user has write access
-#' @param exposureStart The start day after which to consider drug exposures, with respect to cohort start date, using NULL to take the full history)
-#' @param exposureStart The end day before which to consider drug exposures, with respect to cohort end date, using NULL to take the full history)
-#' @return A con_df dataframe
 #' @export
-getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema, exposureStart = 0, exposureEnd = NULL){
+generateCohorts <- function(connectionDetails, json, name, cdmSchema, writeSchema, cohortDefinitionId, exposureStart = 0, exposureEnd = NULL){
 
   connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
 
@@ -32,6 +29,22 @@ getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema, expo
                                                          cohortTableNames = cohortTableNames,
                                                          cohortDefinitionSet = cohortsToCreate)
 
+}
+
+#' Generate a con_df dataframe without using CDMConnector
+#' @param connectionDetails A set of DatabaseConnector connectiondetails
+#' @param cohortTable The table where the cohort to run ARTHEMIS is stored
+#' @param cohortDefinitionId The cohort to run ARTHEMIS on
+#' @param cdmSchema A schema containing a valid OMOP CDM
+#' @param writeSchema A schema where the user has write access
+#' @param exposureStart The start day after which to consider drug exposures, with respect to cohort start date, using NULL to take the full history)
+#' @param exposureEnd The end day before which to consider drug exposures, with respect to cohort end date, using NULL to take the full history)
+#' @return A con_df dataframe
+#' @export
+getConDF <- function(connectionDetails, cohortTable, cdmSchema, writeSchema, cohortDefinitionId, exposureStart = 0, exposureEnd = NULL){
+
+  connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
+
   sql_template <- "
 WITH filtered_drug_exposure AS (
   SELECT @name.cohort_definition_id,
@@ -46,7 +59,9 @@ WITH filtered_drug_exposure AS (
   FROM @cdmSchema.drug_exposure
   LEFT JOIN @cdmSchema.concept_ancestor ON drug_exposure.drug_concept_id = concept_ancestor.descendant_concept_id
   LEFT JOIN @cdmSchema.concept ON concept_ancestor.ancestor_concept_id = concept.concept_id
-  INNER JOIN @writeSchema.@name ON drug_exposure.person_id = @name.subject_id
+  INNER JOIN @writeSchema.@name 
+    ON drug_exposure.person_id = @name.subject_id
+    AND @name.cohort_definition_id = @cohortDefinitionId
     {@exposureStart != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureStart, @name.cohort_start_date)}
     {@exposureEnd != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureEnd, @name.cohort_end_date)}
   WHERE LOWER(concept.concept_class_id) = 'ingredient'
@@ -54,12 +69,14 @@ WITH filtered_drug_exposure AS (
 SELECT * FROM filtered_drug_exposure;
 "
 
-rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema, writeSchema = writeSchema, name = name, exposureStart = exposureStart, exposureEnd = exposureEnd)
+rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema, writeSchema = writeSchema, name = cohortTable, exposureStart = exposureStart, exposureEnd = exposureEnd, cohortDefinitionId = cohortDefinitionId)
 
 con_df <- DatabaseConnector::dbGetQuery(conn = connection,
                                         statement = rendered_sql)
 
 con_df <- as.data.frame(con_df)
+
+DatabaseConnector::disconnect(connection)
 
 return(con_df)
 
