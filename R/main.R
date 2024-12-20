@@ -120,7 +120,7 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
   IDs_All <- select(rawOutput, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
 
   processedAll <- matrix(ncol = 10)
-  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
+  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID", "cohortD    efinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Performing post-processing of ",
                         nrow(IDs_All), " patients.\n Total alignments: ",
@@ -302,7 +302,7 @@ makeCdmEpisodes <- function(processed_eras, drug_exposures, validDrugs, connecti
   rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema)
   
   regimen_concepts <- DatabaseConnector::dbGetQuery(
-    conn = con,
+    conn = connection,
     statement = rendered_sql 
   )
   
