@@ -1,12 +1,11 @@
-#' Generate a con_df dataframe without using CDMConnector
+#' Generate cohorts to run ARTEMIS
 #' @param connectionDetails A set of DatabaseConnector connectiondetails
 #' @param json A loaded cohort from loadJSON()
 #' @param name A cohort-specific name for written tables
 #' @param cdmSchema A schema containing a valid OMOP CDM
 #' @param writeSchema A schema where the user has write access
-#' @return A con_df dataframe
 #' @export
-getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema){
+generateCohorts <- function(connectionDetails, json, name, cdmSchema, writeSchema, cohortDefinitionId, exposureStart = 0, exposureEnd = NULL){
 
   connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
 
@@ -30,12 +29,29 @@ getConDF <- function(connectionDetails, json, name, cdmSchema, writeSchema){
                                                          cohortTableNames = cohortTableNames,
                                                          cohortDefinitionSet = cohortsToCreate)
 
-  subject_ids <- DatabaseConnector::dbGetQuery(conn = connection,
-                                               statement = paste("SELECT subject_id FROM ",writeSchema,".",name,sep=""))
+}
+
+#' Generate a con_df dataframe without using CDMConnector
+#' @param connectionDetails A set of DatabaseConnector connectiondetails
+#' @param cohortTable The table where the cohort to run ARTHEMIS is stored
+#' @param cohortDefinitionId The cohort to run ARTHEMIS on
+#' @param cdmSchema A schema containing a valid OMOP CDM
+#' @param writeSchema A schema where the user has write access
+#' @param exposureStart The start day after which to consider drug exposures, with respect to cohort start date, using NULL to take the full history)
+#' @param exposureEnd The end day before which to consider drug exposures, with respect to cohort end date, using NULL to take the full history)
+#' @return A con_df dataframe
+#' @export
+getConDF <- function(connectionDetails, cohortTable, cdmSchema, writeSchema, cohortDefinitionId = NULL, exposureStart = 0, exposureEnd = NULL){
+
+  connection <- DatabaseConnector::connect(connectionDetails = connectionDetails)
 
   sql_template <- "
 WITH filtered_drug_exposure AS (
-  SELECT drug_exposure.person_id,
+  SELECT @name.cohort_definition_id,
+         @name.cohort_start_date,
+         @name.cohort_end_date,
+         drug_exposure.drug_exposure_id,
+         drug_exposure.person_id,
          drug_exposure.drug_exposure_start_date,
          drug_exposure.drug_concept_id,
          concept_ancestor.ancestor_concept_id,
@@ -43,18 +59,24 @@ WITH filtered_drug_exposure AS (
   FROM @cdmSchema.drug_exposure
   LEFT JOIN @cdmSchema.concept_ancestor ON drug_exposure.drug_concept_id = concept_ancestor.descendant_concept_id
   LEFT JOIN @cdmSchema.concept ON concept_ancestor.ancestor_concept_id = concept.concept_id
-  WHERE drug_exposure.person_id IN @subject_ids
-    AND LOWER(concept.concept_class_id) = 'ingredient'
+  INNER JOIN @writeSchema.@name 
+    ON drug_exposure.person_id = @name.subject_id
+    {@cohortDefinitionId != ''} ? { AND @name.cohort_definition_id = @cohortDefinitionId }
+    {@exposureStart != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureStart, @name.cohort_start_date)}
+    {@exposureEnd != ''} ? { AND drug_exposure.drug_exposure_start_date >= DATEADD(day, @exposureEnd, @name.cohort_end_date)}
+  WHERE LOWER(concept.concept_class_id) = 'ingredient'
 )
 SELECT * FROM filtered_drug_exposure;
 "
 
-rendered_sql <- SqlRender::render(sql_template, subject_ids = gsub("c","",paste(subject_ids)), cdmSchema = cdmSchema)
+rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema, writeSchema = writeSchema, name = cohortTable, exposureStart = exposureStart, exposureEnd = exposureEnd, cohortDefinitionId = cohortDefinitionId)
 
 con_df <- DatabaseConnector::dbGetQuery(conn = connection,
                                         statement = rendered_sql)
 
 con_df <- as.data.frame(con_df)
+
+DatabaseConnector::disconnect(connection)
 
 return(con_df)
 
@@ -79,23 +101,19 @@ stringDF_from_cdm <- function(con_df, writeOut=TRUE, outputName = "Output", vali
   cli::cat_bullet("Generating lag times and constructing drug record strings...",
                   bullet_col = "yellow", bullet = "info")
 
-  #Use lubridate to generate lagtimes
-  con_df$dayTaken <- difftime(lubridate::ymd(con_df$drug_exposure_start_date),
-                              min(lubridate::ymd(con_df$drug_exposure_start_date)), units = "days")
-
   #Correct lagtimes using dayTaken and start date for each subject ID
   con_df_out <- con_df %>%
-    dplyr::with_groups(person_id, dplyr::mutate, dayTaken = .data$dayTaken - min(.data$dayTaken)) %>%
-    dplyr::mutate_at(c("dayTaken"), as.numeric) %>%
-    dplyr::arrange(.data$person_id,.data$dayTaken,.data$concept_name) %>%
-    dplyr::with_groups(person_id, dplyr::mutate,
-                       dayTaken2 = .data$dayTaken -
-                         dplyr::lag(.data$dayTaken, default = dplyr::first(.data$dayTaken))) %>%
-    dplyr::filter(!duplicated(paste(.data$person_id,.data$drug_exposure_start_date,.data$concept_name)))
+    dplyr::mutate(
+      reference_date = min(drug_exposure_start_date),
+      dayTaken = as.numeric(drug_exposure_start_date - min(drug_exposure_start_date)), 
+      .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, person_id)
+      ) %>%
+    dplyr::arrange(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id, dayTaken, concept_name) %>%
+    dplyr::mutate(dayTaken2 = dayTaken - dplyr::lag(dayTaken, default = dplyr::first(dayTaken)), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id)) %>%
+    dplyr::filter(!duplicated(paste(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id, drug_exposure_start_date, concept_name)))
 
   con_df_out2 <- con_df_out  %>%
-    dplyr::group_by(.data$person_id) %>%
-    dplyr::summarise(seq = paste(.data$dayTaken2, ".",.data$concept_name, ";", collapse = "", sep = ""))
+    dplyr::summarise(seq = paste(dayTaken2, ".", concept_name, ";", collapse = "", sep = ""), .by = c(cohort_definition_id, cohort_start_date, cohort_end_date, reference_date, person_id))
 
   con_df_out2$seq <- gsub(" ","",gsub(",","_",con_df_out2$seq))
 

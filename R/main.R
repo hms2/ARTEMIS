@@ -29,9 +29,10 @@
 #' @export
 generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, mem = -1, removeOverlap = -1, method, writeOut = TRUE, outputName = "Output") {
 
-  output_all <- as.data.frame(matrix(nrow = 0,ncol=12))
+  output_all <- as.data.frame(matrix(nrow = 0,ncol=16))
   colnames(output_all) <- c("regName","Regimen","DrugRecord","Score","regimen_Start","regimen_End",
-                            "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS","personID")
+                            "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS",
+                            "personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Processing ",dim(stringDF)[1]," patients and ",dim(regimens)[1]," regimens...",sep=""),
              bullet_col = "yellow", bullet = "info")
@@ -40,9 +41,10 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
 
     drugRecord <- encode(stringDF[j,]$seq)
 
-    output <- as.data.frame(matrix(nrow = 0,ncol=12))
+    output <- as.data.frame(matrix(nrow = 0,ncol=16))
     colnames(output) <- c("regName","Regimen","DrugRecord","Score","regimen_Start","regimen_End",
-                          "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS","personID")
+                          "drugRec_Start","drugRec_End","Aligned_Seq_len","totAlign","adjustedS",
+                          "personID", "cohortDefinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
     for(i in c(1:dim(regimens)[1])) {
 
@@ -67,6 +69,11 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
       if(dim(output_temp)[1] > 1){
 
         output_temp$personID <- stringDF[j,]$person_id
+        output_temp$cohortDefinitionId <- stringDF[j,]$cohort_definition_id
+        output_temp$cohortStartDate <- stringDF[j,]$cohort_start_date
+        output_temp$cohortEndDate <- stringDF[j,]$cohort_end_date
+        output_temp$referenceDate <- stringDF[j,]$reference_date
+
 
         output <- rbind(output,output_temp)
 
@@ -110,33 +117,34 @@ generateRawAlignments <- function(stringDF, regimens, g, Tfac, s=NA, verbose, me
 #' @export
 processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writeOut = TRUE, outputName = "Output_Processed") {
 
-  IDs_All <- unique(rawOutput$personID)
+  IDs_All <- select(rawOutput, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
 
-  processedAll <- matrix(ncol = 6)
-  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID")
+  processedAll <- matrix(ncol = 10)
+  colnames(processedAll) <- c("t_start","t_end","component","regimen","adjustedS","personID", "cohortD    efinitionId", "cohortStartDate", "cohortEndDate", "referenceDate")
 
   cli::cat_bullet(paste("Performing post-processing of ",
-                        length(IDs_All), " patients.\n Total alignments: ",
+                        nrow(IDs_All), " patients.\n Total alignments: ",
                         dim(rawOutput)[1],sep = ""),
                   bullet_col = "yellow", bullet = "info")
 
   #Collect all tests here
-  for(i in c(1:length(IDs_All))){
-
-    newOutput <- rawOutput[rawOutput$personID == IDs_All[i],]
-
+   #Collect all tests here
+  for(i in c(1:nrow(IDs_All))){
+    
+    newOutput <- dplyr::slice(IDs_All, i) %>%
+      inner_join(rawOutput) 
+    
     processed <- plotOutput(newOutput, returnDat = T, returnDrugs = FALSE)
-
-    progress(x = i, max = length(IDs_All))
-
-    processed$personID <- as.character(processed$personID)
-
-    processedAll <- rbind(processedAll,processed)
-
+    
+    progress(x = i, max = nrow(IDs_All))
+    
+    processed <- left_join(processed, dplyr::slice(IDs_All, i))
+    
+    if(i == 1) processedAll <- processed
+    if(i > 1) processedAll <- rbind(processedAll,processed)
+    
   }
-
-  processedAll <- processedAll[-1,]
-
+  
   if(writeOut == TRUE){
     outputFile <- here::here()
     suppressWarnings(
@@ -147,10 +155,18 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
   processedAll$timeToNextRegimen <- 0
   processedAll$timeToEOD <- 0
 
-  for(ID in unique(processedAll$personID)){
-    output_temp <- rawOutput[rawOutput$personID==ID,]
+  IDs_All <- select(processedAll, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
+
+  processedAllF <- slice(processedAll,0)
+
+  for(ID in 1:nrow(IDs_All)){
+    output_temp <- dplyr::slice(IDs_All, i) %>%
+      inner_join(rawOutput) 
+
     drugDF_temp <- createDrugDF(encode(output_temp[is.na(output_temp$Score)|output_temp$Score=="",][1,]$DrugRecord))
-    processed_temp <- processedAll[processedAll$personID == ID,]
+
+    processed_temp <- dplyr::slice(IDs_All, i) %>%
+      inner_join(processedAll)
 
     endOfData <- max(drugDF_temp$t_start)
 
@@ -161,7 +177,7 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
 
     processed_temp[nrow(processed_temp),]$timeToEOD <- endOfData - processed_temp[nrow(processed_temp),]$t_end
 
-    processedAll[processedAll$personID == ID,] <- processed_temp
+    processedAllF <- bind_rows(processedAllF, processed_temp)
   }
 
   if(dim(processedAll[which(processedAll$timeToNextRegimen < 0),])[1]){
@@ -197,73 +213,130 @@ processAlignments <- function(rawOutput, regimenCombine, regimens = "none", writ
 #' @param discontinuationTime The number of days to use to indicate treatment discontinuation
 #' @return A processed alignment dataframe with added era data relating to first/second/other sequencing
 #' @export
-calculateEras <- function(processedAll, discontinuationTime = 120){
+  calculateEras <- function(processedAll, discontinuationTime = 120){
 
-  IDs_All <- unique(processedAll$personID)
-  processedEras <- processedAll[0,]
+    IDs_All <- select(processedAll, personID, cohortDefinitionId, cohortStartDate, cohortEndDate, referenceDate) %>% distinct
 
-  for(i in c(1:length(IDs_All))){
+    processedEras <- processedAll[0,]
 
-    tempDF <- processedAll[processedAll$personID == IDs_All[i],]
+    for(i in c(1:nrow(IDs_All))){
 
-    tempDF <- tempDF[order(tempDF$t_start),]
-    toRemove <- c()
+      tempDF <- slice(IDs_All, i) %>%
+        left_join(processedAll)
 
-    if(dim(tempDF)[1]>1){
-      for(i in c(2:length(tempDF$component))){
-        if(tempDF[i,]$t_start < tempDF[i-1,]$t_end){
-          toRemove <- c(toRemove,i)
+      tempDF <- tempDF[order(tempDF$t_start),]
+      toRemove <- c()
+
+      if(dim(tempDF)[1]>1){
+        for(i in c(2:length(tempDF$component))){
+          if(tempDF[i,]$t_start < tempDF[i-1,]$t_end){
+            toRemove <- c(toRemove,i)
+          }
         }
       }
+
+      if(length(toRemove) > 0){
+        tempDF <- tempDF[-toRemove,]
+      }
+
+      tempDF <- tempDF %>%
+        dplyr::mutate(timeToNextRegimen = dplyr::lead(t_start) - t_end)
+
+      tempDF <- tempDF %>%
+        dplyr::mutate(lag = dplyr::lag(.data$timeToNextRegimen),
+                      delete = ifelse((dplyr::lag(.data$timeToNextRegimen) < discontinuationTime &
+                                        component == dplyr::lag(component)),"Y","N"))
+
+      tempDF[1,]$delete <- "N"
+      tempDF <- tempDF[tempDF$delete != "Y",!colnames(tempDF) %in% c("delete")]
+
+      changeIndex <- which(tempDF$t_start !=
+                            dplyr::lag(tempDF$t_start))
+
+      tempDF$First_Line <- 1
+      #if(dim(tempDF)[1] > 1){
+      #  tempDF[-1,]$First_Line <- 0
+      #}
+      tempDF$Second_Line <- 0
+      tempDF$Other <- 0
+
+      if(length(changeIndex) > 0){
+        tempDF[changeIndex[1],]$First_Line <- 0
+        tempDF[changeIndex[1],]$Second_Line <- 1
+      }
+
+      if(length(changeIndex) > 1){
+        tempDF[changeIndex[-1],]$First_Line <- 0
+        tempDF[changeIndex[-1],]$Second_Line <- 0
+        tempDF[changeIndex[-1],]$Other <- 1
+      }
+
+      processedEras <- rbind(processedEras,tempDF)
+
+      #Handle overlapping regimens
+      processedEras$timeToNextRegimen[processedEras$timeToNextRegimen < 0] <- 0
+
+
     }
 
-    if(length(toRemove) > 0){
-      tempDF <- tempDF[-toRemove,]
-    }
-
-    tempDF <- tempDF %>%
-      dplyr::mutate(timeToNextRegimen = dplyr::lead(t_start) - t_end)
-
-    tempDF <- tempDF %>%
-      dplyr::mutate(lag = dplyr::lag(.data$timeToNextRegimen),
-                    delete = ifelse((dplyr::lag(.data$timeToNextRegimen) < discontinuationTime &
-                                       component == dplyr::lag(component)),"Y","N"))
-
-    tempDF[1,]$delete <- "N"
-    tempDF <- tempDF[tempDF$delete != "Y",!colnames(tempDF) %in% c("delete")]
-
-    changeIndex <- which(tempDF$t_start !=
-                           dplyr::lag(tempDF$t_start))
-
-    tempDF$First_Line <- 1
-    #if(dim(tempDF)[1] > 1){
-    #  tempDF[-1,]$First_Line <- 0
-    #}
-    tempDF$Second_Line <- 0
-    tempDF$Other <- 0
-
-    if(length(changeIndex) > 0){
-      tempDF[changeIndex[1],]$First_Line <- 0
-      tempDF[changeIndex[1],]$Second_Line <- 1
-    }
-
-    if(length(changeIndex) > 1){
-      tempDF[changeIndex[-1],]$First_Line <- 0
-      tempDF[changeIndex[-1],]$Second_Line <- 0
-      tempDF[changeIndex[-1],]$Other <- 1
-    }
-
-    processedEras <- rbind(processedEras,tempDF)
-
-    #Handle overlapping regimens
-    processedEras$timeToNextRegimen[processedEras$timeToNextRegimen < 0] <- 0
-
+    return(processedEras)
 
   }
 
-  return(processedEras)
+#' Generates episode and episode event data for use in OMOP CDM
+#' @param processed_eras A dataframe processed alignments, generated by processAlignments()
+#' @param drug_exposures A dataframe containing drug exposures, generated by getConDF
+#' @param validDrugs A dataframe containing a set of validDrugs
+#' @param connection A  DatabaseConnector connection to OMOP CDM
+#' @param cdmSchema A schema containing a valid OMOP CDM
+#' @param start_episode_id The episode_id to start generating new episodes
+#' @return A list of two dataframes, one containing episode and one containig episode_event data
+#' @export
+makeCdmEpisodes <- function(processed_eras, drug_exposures, validDrugs, connection, cdmSchema, start_episode_id = 1){
+  
+  sql_template <- "SELECT concept_name, concept_id 
+                   FROM @cdmSchema.concept 
+                   WHERE concept_class_id = 'Regimen' 
+                   AND standard_concept = 'S'"
+  
+  rendered_sql <- SqlRender::render(sql_template, cdmSchema = cdmSchema)
+  
+  regimen_concepts <- DatabaseConnector::dbGetQuery(
+    conn = connection,
+    statement = rendered_sql 
+  )
+  
+  episode <- processed_eras %>%
+    mutate(concept_name = str_replace_all(component, "&", "and")) %>%
+    left_join(regimen_concepts, relationship = "many-to-many") %>%
+    arrange(personID, cohortDefinitionId, cohortStartDate, cohortEndDate, t_start) %>%
+    mutate(episode_id = start_episode_id + row_number() - 1,
+           person_id = personID,
+           episode_concept_id = 32941,
+           episode_start_date = referenceDate + days(t_start),
+           episode_start_datetime = NA,
+           episode_end_date = referenceDate + days(t_end),
+           episode_end_datetime = NA,
+           episode_parent_id = NA,
+           episode_number = row_number(),
+           episode_object_concept_id = concept_id,
+           episode_type_concept_id = 0,
+           episode_source_value = component,
+           episode_source_concept_id = 0,
+           .by = personID
+    ) %>%
+    select(episode_id:episode_source_concept_id)
+  
+  episode_event <- select(episode, episode_id, person_id, episode_start_date, episode_end_date, episode_source_value) %>%
+    left_join(filter(drug_exposures, ancestor_concept_id %in% validDrugs$valid_concept_id), relationship = "many-to-many") %>%
+    filter(drug_exposure_start_date >= episode_start_date, drug_exposure_start_date <= episode_end_date) %>% 
+    select(episode_id, event_id = drug_exposure_id) %>%
+    mutate(episode_event_field_concept_id = 1147094)
+  
+  return(list(episode = episode, episode_event = episode_event))
+  
+} 
 
-}
 
 #' Generates a data frame containing summary stats from processed regimen data
 #' @param processedEras A dataframe processed alignments, generated by processAlignments()
